@@ -12,6 +12,7 @@ data:
   val_batch_size: 128
   shuffle_train_dataloader: True
   model_type: chat
+do_search: False               # Default to False for Pure Reasoning (CoT)
 
 reward_model:
   enable: false
