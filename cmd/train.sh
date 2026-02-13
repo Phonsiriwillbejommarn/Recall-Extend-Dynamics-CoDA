@@ -120,6 +120,11 @@ fi
 
 # 9. Main Training Command
 # Convert Data to Parquet first
+if [ ! -f "data/train.parquet" ]; then
+    echo "⚠️ data/train.parquet not found. Running pre-processing..."
+    bash preprocess/scripts/data_process.sh
+fi
+
 echo "🔄 Generating SFT Data (Typhoon + Synthetic)..."
 python3 cmd/generate_sft_data.py
 

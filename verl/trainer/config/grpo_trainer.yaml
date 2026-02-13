@@ -150,7 +150,6 @@ trainer:
   default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
 
 max_turns: 6      # คุมจำนวนรอบเพื่อแก้ปัญหา Context Explosion ของ CoDA
-max_turns: 6      # Control max turns for CoDA context
 # Search/Retriever parameters removed as we are now using Pure Reasoning (CoT)
 
 # --- SFT Configuration (Extend Phase) ---

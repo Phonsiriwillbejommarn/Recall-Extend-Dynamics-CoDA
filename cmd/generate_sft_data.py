@@ -231,8 +231,12 @@ def create_sft_examples_from_train(train_path='data/train.parquet', output_path=
     n_typhoon = len(typhoon_data)
     
     # 2. Load Synthetic Source Data
-    df = pd.read_parquet(train_path)
-    print(f"Loaded {len(df)} rows from {train_path}")
+    if os.path.exists(train_path):
+        df = pd.read_parquet(train_path)
+        print(f"Loaded {len(df)} rows from {train_path}")
+    else:
+        print(f"⚠️ Warning: {train_path} not found. Skipping synthetic data generation.")
+        df = pd.DataFrame()
     
     # Balance: Aim for 50/50 split if possible
     # If we have N typhoon samples, try to get N synthetic samples
