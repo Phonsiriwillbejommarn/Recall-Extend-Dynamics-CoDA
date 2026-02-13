@@ -162,9 +162,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.n_agent=2 \
     actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.temperature=0.9 \
-    +actor_rollout_ref.rollout.top_p=0.9 \
-    +actor_rollout_ref.rollout.top_k=50 \
-    +actor_rollout_ref.rollout.repetition_penalty=1.2 \
+    ++actor_rollout_ref.rollout.top_p=0.9 \
+    ++actor_rollout_ref.rollout.top_k=50 \
+    ++actor_rollout_ref.rollout.repetition_penalty=1.2 \
     actor_rollout_ref.actor.state_masking=true \
     trainer.logger=['wandb'] \
     trainer.n_gpus_per_node=$num_gpus \
