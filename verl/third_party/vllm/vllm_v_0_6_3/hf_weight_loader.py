@@ -37,6 +37,8 @@ def load_hf_weights(actor_weights: Dict, vllm_model: nn.Module):
                 continue
             # Strip the PEFT wrapper prefix
             new_key = k.replace("base_model.model.", "", 1)
+            # Strip .base_layer. that PEFT adds around LoRA target modules
+            new_key = new_key.replace(".base_layer.", ".")
             cleaned[new_key] = v
         actor_weights = cleaned
 
