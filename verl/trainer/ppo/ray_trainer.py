@@ -506,6 +506,9 @@ class RayPPOTrainer(object):
                 drop_last=True,
                 collate_fn=collate_fn
             )
+            if sft_config.get('micro_batch_size', 4) != self.config.data.train_batch_size:
+                logging.warning(f"SFT micro_batch_size ({sft_config.get('micro_batch_size', 4)}) != RL train_batch_size ({self.config.data.train_batch_size}). "
+                                f"This may lead to high variance in RED weighting. Consider matching them.")
             logging.info(f'SFT DataLoader created with {len(sft_dataset)} samples')
 
         # inject total_training_steps to actor/critic optim_config. This is hacky.
@@ -1118,6 +1121,21 @@ class RayPPOTrainer(object):
                                 if 'position_ids' not in sft_tensors and 'attention_mask' in sft_tensors:
                                     sft_tensors['position_ids'] = torch.cumsum(sft_tensors['attention_mask'], dim=-1) - 1
                                     sft_tensors['position_ids'] = sft_tensors['position_ids'].clamp(min=0)
+                                
+                                # --- Update RL Entropy (Pre-update) ---
+                                # Use old_log_probs from current batch to estimate current RL entropy immediately
+                                # This removes the 1-step lag for RL entropy
+                                if 'old_log_probs' in batch.batch:
+                                    # masking
+                                    response_length = batch.batch['responses'].shape[-1]
+                                    response_mask = batch.batch['attention_mask'][:, -response_length:]
+                                    old_log_probs = batch.batch['old_log_probs']
+                                    # entropy = - log_prob
+                                    valid_entropy = -masked_mean(old_log_probs, response_mask)
+                                    h_rl_new = valid_entropy.detach().cpu()
+                                    
+                                    self.h_rl_prev = self.h_rl_curr.clone()
+                                    self.h_rl_curr = red_rl_decay * self.h_rl_curr + (1 - red_rl_decay) * h_rl_new
 
                                 # Compute RED weight using delay-1 entropy tracking
                                 red_weight = core_algos.compute_red_weight(
@@ -1146,6 +1164,16 @@ class RayPPOTrainer(object):
                                 metrics['red/entropy_weight'] = entropy_weight
                                 metrics['red/accuracy_factor'] = accuracy_factor
                                 metrics['red/final_weight'] = final_red_weight
+                                metrics['red/h_rl_curr'] = float(self.h_rl_curr)
+                                metrics['red/h_sft_curr'] = float(self.h_sft_curr)
+                                metrics['red/h_rl_prev'] = float(self.h_rl_prev)
+                                metrics['red/h_sft_prev'] = float(self.h_sft_prev)
+                                
+                                # Calculate deltas for logging (re-using the logic from core_algos for visibility)
+                                delta_h_rl_log = abs(float(self.h_rl_curr) - float(self.h_rl_prev))
+                                delta_h_sft_log = abs(float(self.h_sft_curr) - float(self.h_sft_prev))
+                                metrics['red/delta_h_rl'] = delta_h_rl_log
+                                metrics['red/delta_h_sft'] = delta_h_sft_log
 
                                 # Pass SFT batch and RED weight to actor
                                 batch.meta_info['sft_batch'] = sft_tensors
@@ -1156,14 +1184,10 @@ class RayPPOTrainer(object):
                         actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
                         metrics.update(actor_output_metrics)
 
-                        # --- Update RED entropy EMA after actor update (delay-1) ---
-                        if self.sft_enabled and 'actor/rl_entropy' in metrics and 'actor/sft_entropy' in metrics:
-                            h_rl_new = torch.tensor(metrics['actor/rl_entropy'])
+                        # --- Update RED entropy EMA (SFT Only - after update) ---
+                        if self.sft_enabled and 'actor/sft_entropy' in metrics:
                             h_sft_new = torch.tensor(metrics['actor/sft_entropy'])
-                            # Shift: prev ← curr, then update curr with new entropy
-                            self.h_rl_prev = self.h_rl_curr.clone()
                             self.h_sft_prev = self.h_sft_curr.clone()
-                            self.h_rl_curr = red_rl_decay * self.h_rl_curr + (1 - red_rl_decay) * h_rl_new
                             self.h_sft_curr = red_sft_decay * self.h_sft_curr + (1 - red_sft_decay) * h_sft_new
 
                     # validate

@@ -127,8 +127,12 @@ if [ ! -f "data/train.parquet" ]; then
     bash preprocess/scripts/data_process.sh
 fi
 
-echo "🔄 Generating SFT Data (Typhoon + Synthetic)..."
-python3 cmd/generate_sft_data.py
+if [ ! -f "data/sft_train.parquet" ]; then
+    echo "🔄 Generating SFT Data (Typhoon + Synthetic)..."
+    python3 cmd/generate_sft_data.py
+else
+    echo "✅ SFT Data found (data/sft_train.parquet), skipping generation."
+fi
 
 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path=$MODEL_PATH \
@@ -178,13 +182,17 @@ python3 -m verl.trainer.main_ppo \
     trainer.default_local_dir=verl_checkpoints/$EXPERIMENT_NAME \
     sft.enabled=true \
     sft.train_files=data/sft_train.parquet \
-    sft.loss_coef=0.1 \
-    sft.micro_batch_size=4 \
+    sft.loss_coef=0.05 \
+    sft.micro_batch_size=16 \
     sft.max_length=4096 \
-    red.G=5.0 \
+    red.G=3.0 \
     red.sft_entropy_ema_decay=0.99 \
     red.rl_entropy_ema_decay=0.99 \
     +actor_rollout_ref.actor.enable_max_procedural=true \
+    +actor_rollout_ref.actor.lora.target_modules=all-linear \
+    +actor_rollout_ref.actor.lora.r=64 \
+    +actor_rollout_ref.actor.lora.lora_alpha=128 \
+    +actor_rollout_ref.actor.lora.lora_dropout=0.05 \
     2>&1 | tee log/$EXPERIMENT_NAME.log
 
 # Cleanup
