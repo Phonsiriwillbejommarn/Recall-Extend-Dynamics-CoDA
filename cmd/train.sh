@@ -120,16 +120,16 @@ fi
 
 # 9. Main Training Command
 # Convert Data to Parquet first
-echo "🔄 Converting Typhoon Data to Parquet..."
-python3 dataset/convert_jsonl_to_parquet.py
+echo "🔄 Generating SFT Data (Typhoon + Synthetic)..."
+python3 cmd/generate_sft_data.py
 
 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path=$MODEL_PATH \
     actor_rollout_ref.model.enable_gradient_checkpointing=true \
     actor_rollout_ref.model.use_remove_padding=True \
     reward_model.reward_style="qwen_judge" \
-    data.train_files=dataset/typhoon_data.parquet \
-    data.val_files=dataset/typhoon_data.parquet \
+    data.train_files=data/sft_train.parquet \
+    data.val_files=data/sft_train.parquet \
     data.train_batch_size=32 \
     data.val_batch_size=128 \
     data.max_prompt_length=3072 \
@@ -166,10 +166,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name=$WANDB_PROJECT \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.default_local_dir=verl_checkpoints/$EXPERIMENT_NAME \
-    retriever.url="http://127.0.0.1:8000/retrieve" \
-    retriever.topk=3 \
     sft.enabled=true \
-    sft.train_files=dataset/typhoon_data.parquet \
+    sft.train_files=data/sft_train.parquet \
     sft.loss_coef=0.1 \
     sft.micro_batch_size=4 \
     sft.max_length=4096 \

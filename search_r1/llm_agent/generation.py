@@ -12,7 +12,6 @@ from .tensor_helper import TensorHelper, TensorConfig
 from verl import DataProto
 from verl.utils.tracking import Tracking
 import shutil
-import requests
 import numpy as np
 
 @dataclass
@@ -24,8 +23,6 @@ class GenerationConfig:
     max_obs_length: int
     num_gpus: int
     no_think_rl: bool = False
-    search_url: str = ""
-    topk: int = 3
     # Hierarchical tool calling parameters
     enable_hierarchical: bool = True
     inner_max_turns: int = 5
@@ -72,7 +69,6 @@ Step 2 (Revised): ...
 Final Answer: ...
 
 **Tools:**
-- Use <search>query</search> during the Actor phase to find facts.
 - Use <think>...</think> to wrap the entire content of each section.
 - Use <answer>final answer</answer> ONLY at the very end of the Refined Reasoning.
 
@@ -126,8 +122,8 @@ class LLMGenerationManager:
             # Outer loop: look for task and answer actions
             action_tags = ['</task>', '</answer>']
         else:
-            # Inner loop or non-hierarchical: look for search and answer actions
-            action_tags = ['</search>', '</answer>']
+            # Inner loop or non-hierarchical: look for answer action only (pure reasoning)
+            action_tags = ['</answer>']
 
         processed_responses = []
         for resp in responses_str:
@@ -564,9 +560,8 @@ class LLMGenerationManager:
         has_task = False
         
         if is_inner_loop:
-            search_queries = [content for action, content in zip(cur_actions, contents) if action == 'search']
-            search_results = self.batch_search(search_queries)
-            assert len(search_results) == sum([1 for action in cur_actions if action == 'search'])
+            # Inner loop: pure reasoning, no search needed
+            pass
         else:
             task_queries = [content for action, content in zip(cur_actions, contents) if action == 'task']
             task_origin = np.array([idx for idx, action in enumerate(cur_actions) if action == 'task'])
@@ -588,15 +583,11 @@ class LLMGenerationManager:
                     continue
 
                 if is_inner_loop:
-                    if action == 'search':
-                        next_obs.append(f'\n<documents>{search_results.pop(0).strip()}</documents>\n')
-                        dones.append(0)
-                    else:
-                        error_msg = f'\nMy previous action is invalid. \
-If I want to search, I should put the query between <search> and </search>. \
-If I want to give the final answer, I should put the answer between <answer> and </answer>. Let me try again.\n'
-                        next_obs.append(error_msg)
-                        dones.append(0)
+                    # Inner loop: no search, only answer is valid
+                    error_msg = f'\nMy previous action is invalid. \
+I should reason step by step using <think> and </think>, then provide the final answer between <answer> and </answer>. Let me try again.\n'
+                    next_obs.append(error_msg)
+                    dones.append(0)
                 else:
                     if action == 'task':
                         next_obs.append(f'\n<result>{task_results.pop(0).strip()}</result>\n')
@@ -633,8 +624,8 @@ If I want to give the final answer, I should put the answer between <answer> and
                     # Outer loop: support task and answer actions
                     pattern = r'<(task|answer)>(.*?)</\1>'
                 else:
-                    # Inner loop or non-hierarchical: support search and answer actions
-                    pattern = r'<(search|answer)>(.*?)</\1>'
+                    # Inner loop or non-hierarchical: only answer action (pure reasoning)
+                    pattern = r'<(answer)>(.*?)</\1>'
                     
                 match = re.search(pattern, prediction, re.DOTALL)
                 if match:
@@ -785,76 +776,4 @@ If I want to give the final answer, I should put the answer between <answer> and
 
         return final_output, task_results
     
-    def batch_search(self, queries: List[str]) -> List[str]:
-        """
-        Batchified search for queries.
-        Args:
-            queries: queries to call the search engine
-        Returns:
-            search results which is concatenated into a string
-        """
-        try:
-            search_response = self._batch_search(queries)
-            if 'result' not in search_response:
-                raise ValueError("Invalid search response format: missing 'result' key")
-            results = search_response['result']
-            return [self._passages2string(result) for result in results]
-        except (KeyError, ValueError) as e:
-            raise ValueError(f"Failed to process search results: {str(e)}")
-        except (requests.ConnectionError, requests.Timeout, requests.RequestException) as e:
-            logging.warning(f"Retriever service unavailable: {e}. Returning empty results.")
-            return ["No search results available." for _ in queries]
 
-    def _batch_search(self, queries: List[str]) -> Dict[str, Any]:
-        """
-        Perform batch search with error handling.
-
-        Args:
-            queries: List of search queries
-
-        Returns:
-            Search response dictionary
-
-        Raises:
-            ValueError: If search URL is not configured
-            requests.RequestException: If network request fails
-        """
-        if not self.config.search_url:
-            raise ValueError("Search URL is not configured")
-
-        payload = {
-            "queries": queries,
-            "topk": self.config.topk,
-            "return_scores": True
-        }
-
-        try:
-            response = requests.post(self.config.search_url, json=payload, timeout=30)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            raise requests.RequestException(f"Search request failed: {str(e)}")
-
-    def _passages2string(self, retrieval_result: List[Dict[str, Any]]) -> str:
-        """
-        Convert retrieval results to formatted string.
-
-        Args:
-            retrieval_result: List of retrieved documents
-
-        Returns:
-            Formatted string representation of search results
-        """
-        format_reference = ''
-        for idx, doc_item in enumerate(retrieval_result):
-            try:
-                content = doc_item['document']['contents']
-                content_lines = content.split("\n")
-                title = content_lines[0] if content_lines else "Untitled"
-                text = "\n".join(content_lines[1:]) if len(content_lines) > 1 else ""
-                format_reference += f"Doc {idx+1}(Title: {title}) {text}\n"
-            except (KeyError, IndexError) as e:
-                # Skip malformed documents and continue
-                continue
-
-        return format_reference

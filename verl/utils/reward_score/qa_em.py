@@ -74,10 +74,7 @@ def validate_format(prompt, response):
     Returns a score between 0.0 and 1.0 based on how many tags are correctly used.
     Each correctly paired tag contributes 1/N of the total score.
     """
-    if '<refine>' in prompt:
-        token_list = ['think', 'search', 'refine', 'answer']
-    else:
-        token_list = ['think', 'task', 'answer']
+    token_list = ['think', 'answer']
 
     if not response:
         return 0.0
@@ -118,49 +115,15 @@ def cover_em_check(prediction, golden_answers):
             break
     return score
 
-def extract_information(responses_str):
-    """Extract and concatenate information from <documents> tags, skipping the first."""
-    info_pattern = r'<documents>(.*?)</documents>'
-    matches = re.findall(info_pattern, responses_str, re.DOTALL)
-    
-    if len(matches) <= 1:
-        return None
-    
-    # Concatenate from the second match onward
-    combined_info = ' '.join(matches[1:]).strip()
-    return combined_info
-
-def extract_information_list(responses_str):
-    """Extract and concatenate information from <documents> tags, skipping the first."""
-    info_pattern = r'<documents>(.*?)</documents>'
-    matches = re.findall(info_pattern, responses_str, re.DOTALL)
-    
-    if len(matches) <= 1:
-        return None
-    matches = matches[1:]
-    return matches
-
-def extract_refine(responses_str):
-    info_pattern = r'<refine>(.*?)</refine>'
-    matches = re.findall(info_pattern, responses_str, re.DOTALL)
-    
-    if len(matches) == 0:
-        return None
-    
-    # Concatenate from the second match onward
-    combined_info = ' '.join(matches).strip()
-    return combined_info
-
 def extract_solution(responses_str):
     answer_pattern = r'<answer>(.*?)</answer>'
     match = re.finditer(answer_pattern, responses_str, re.DOTALL)
     matches = list(match)
     
-    # If there are 0 or exactly 1 matches, return None
     if len(matches) <= 0:
         return None
     
-    # If there are 2 or more matches, return the last one
+    # Return the last answer found
     return matches[-1].group(1).strip()
 
 def compute_score_format(responses_str, ground_truth):
@@ -197,37 +160,3 @@ def compute_score_cem(responses_str, ground_truth):
         return 0
     else:
         return cover_em_check(answer, _get_target(ground_truth))
-
-
-def compute_information_score_subem(responses_str, ground_truth):
-    information = extract_information(responses_str)
-    
-    if information is None:
-        return 0.0
-    else:
-        target = _get_target(ground_truth)
-        if isinstance(target, str) and target in ('no', 'yes'):
-            return 0.5
-        return cover_em_check(information, target)
-
-def compute_information_reverse_rank(responses_str, ground_truth):
-    doc_list = extract_information_list(responses_str)
-    info_score = 0.0
-    
-    if doc_list is None:
-        return 0.0
-    else:
-        target = _get_target(ground_truth)
-        if isinstance(target, str) and target in ('no', 'yes'):
-            return 0.5
-        for idx, doc in enumerate(doc_list):
-            if cover_em_check(doc, target):
-                info_score += 1 / float(idx + 1)
-    return info_score
-
-def compute_refine_score_subem(responses_str, ground_truth):
-    refined_info = extract_refine(responses_str)
-    if refined_info is None:
-        return 0.0
-    else:
-        return cover_em_check(refined_info, _get_target(ground_truth))

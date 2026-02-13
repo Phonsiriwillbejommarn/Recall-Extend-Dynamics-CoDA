@@ -541,8 +541,6 @@ class RayPPOTrainer(object):
             max_obs_length=self.config.data.max_obs_length,
             num_gpus=self.config.trainer.n_gpus_per_node,
             no_think_rl=self.config.algorithm.no_think_rl,
-            search_url=self.config.retriever.url,
-            topk=self.config.retriever.topk,
             inner_max_turns = self.config.max_turns
         )
 
@@ -934,8 +932,6 @@ class RayPPOTrainer(object):
             max_obs_length=self.config.data.max_obs_length,
             num_gpus=self.config.trainer.n_gpus_per_node,
             no_think_rl=self.config.algorithm.no_think_rl,
-            search_url=self.config.retriever.url,
-            topk=self.config.retriever.topk,
             inner_max_turns=self.config.max_turns
         )
 

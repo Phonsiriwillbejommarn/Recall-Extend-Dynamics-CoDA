@@ -134,8 +134,12 @@ class RLHFDataset(Dataset):
             question = chat[0]["content"]
 
         if self.model_type == "base":
-            # Decoupled CoDA System Prompt (True CoDA)
-            system_prompt = """You are an AI assistant capable of complex reasoning.
+            # Check if prompt already contains system prompt (from generate_sft_data.py)
+            if isinstance(question, str) and "You are a helpful assistant" in question:
+                 prompt_with_chat_template = question + "\n" + "Answer:"
+            else:
+                # Decoupled CoDA System Prompt (True CoDA)
+                system_prompt = """You are an AI assistant capable of complex reasoning.
 To solve problems, you MUST use the following PROTOCOL:
 
 <think>
@@ -157,12 +161,16 @@ The System will return the Critic's feedback in <result>...</result>.
 <answer>Final Answer</answer>
 
 Question: """
-            prompt_with_chat_template = system_prompt + question + "\n" + "Answer:"
+                prompt_with_chat_template = system_prompt + question + "\n" + "Answer:"
 
         else:
             # Default case - use chat template
-            # CoDA System Prompt (Matching generate_typhoon.py)
-            system_prompt = """You are an AI assistant capable of complex reasoning and coding.
+            # Check if prompt already contains system prompt
+            if isinstance(question, str) and "You are a helpful assistant" in question:
+                 prompt_with_chat_template = question
+            else:
+                # CoDA System Prompt (Matching generate_typhoon.py)
+                system_prompt = """You are an AI assistant capable of complex reasoning and coding.
 Solve the problem using this EXACT format.
 
 <think>
@@ -181,13 +189,12 @@ Final Answer/Code: ...
 </think>
 <answer>Put the final answer or code here</answer>
 """
+                chat = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
 
-            chat = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
-
-            if self.tokenizer.chat_template:
-                prompt_with_chat_template = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
-            else:
-                prompt_with_chat_template = chat[0]['content']
+                if self.tokenizer.chat_template:
+                    prompt_with_chat_template = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
+                else:
+                    prompt_with_chat_template = chat[0]['content']
 
         input_ids, attention_mask = verl_F.tokenize_and_postprocess_data(prompt=prompt_with_chat_template,
                                                                          tokenizer=self.tokenizer,

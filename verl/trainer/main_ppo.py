@@ -25,12 +25,9 @@ from collections import defaultdict
 
 
 LOG_FUNCS = {
-    'information_scores': qa_em.compute_information_score_subem,
-    'information_reverse_rank': qa_em.compute_information_reverse_rank,
     'answer_em': qa_em.compute_score_em,
     'answer_f1': qa_em.compute_score_f1,
     'answer_cem': qa_em.compute_score_cem,
-    'refine_scores': qa_em.compute_refine_score_subem,
     'format_scores': qa_em.compute_score_format,
 }
 
@@ -42,19 +39,19 @@ class RewardManager():
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
         self.format_score = format_score
-        self.refine_score = refine_score
+        self.refine_score = refine_score  # kept for API compatibility, but no longer used
         self.log_path = log_path
         self.reward_style = reward_style
 
     def decode_sequences_and_responses(self, data_item):
         """
-        Abstract decoding function to extract and decode sequences from DataProtoItem
+        Decode sequences and responses from a DataProtoItem.
 
         Args:
             data_item: DataProtoItem object
 
         Returns:
-            tuple: (sequences_str, responses_str) - decoded full sequences and response strings
+            tuple: (sequences_str, responses_str)
         """
         prompt_ids = data_item.batch['prompts']
         prompt_length = prompt_ids.shape[-1]
@@ -72,25 +69,6 @@ class RewardManager():
         responses_str = self.tokenizer.decode(valid_response_ids)
 
         return sequences_str, responses_str
-
-    def get_refine_subem(self, data: DataProto):
-        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
-
-        for i in range(len(data)):
-            data_item = data[i]  # DataProtoItem
-
-            # Use abstract decoding function
-            sequences_str, responses_str = self.decode_sequences_and_responses(data_item)
-
-            ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
-
-            score = qa_em.compute_refine_score_subem(responses_str=responses_str, ground_truth=ground_truth)
-
-            # Get valid response length for setting reward
-            prompt_length = data_item.batch['prompts'].shape[-1]
-            valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
-            reward_tensor[i, valid_response_length - 1] = score
-        return reward_tensor
     
     def get_logging_scores_training(self, data: DataProto, step: int = -1):
         additional_scores = defaultdict(lambda: torch.zeros(len(data), dtype=torch.float32))
@@ -184,7 +162,6 @@ class RewardManager():
                     "planner_format_score": [],
                     "executor_format_score": [],
                     "answer_score": 0,
-                    "refine_score": 0,
                 }
 
             # Use abstract decoding function
@@ -224,11 +201,8 @@ class RewardManager():
                     compute_score_fn = qa_em.cover_em_check
                 elif self.reward_style.lower() == 'qwen_judge':
                     from verl.utils.reward_score.qwen_judge import compute_qwen_score
-                    score = compute_qwen_score(responses_str=responses_str, ground_truth=ground_truth)
-                    # compute_qwen_score already returns the scalar.
-                    # We skip qa_em.compute_reward wrapper here for simplicity or wrap it if needed.
-                    # But qa_em.compute_reward expects a score_func.
-                    # Let's call it directly.
+                    # sequences_str contains Prompt + Response, which is perfect for context
+                    score = compute_qwen_score(responses_str=responses_str, ground_truth=ground_truth, prompts_str=sequences_str)
                     score_record[uid]["planner_format_score"].append(format_validity)
                     score_record[uid]["answer_score"] = score
                     continue # Skip the default compute_reward call below
@@ -239,20 +213,17 @@ class RewardManager():
                 score_record[uid]["planner_format_score"].append(format_validity)
                 score_record[uid]["answer_score"] = score
             else:
-                if score_record[uid]["refine_score"] == 0:
-                    refine_score = qa_em.compute_refine_score_subem(responses_str=responses_str, ground_truth=ground_truth)
-                    score_record[uid]["refine_score"] = refine_score
+                # Executor: only track format compliance (no refine scoring)
                 score_record[uid]["executor_format_score"].append(format_validity)
 
         for uid, score_info in score_record.items():
             planner_format_score = sum(score_info["planner_format_score"]) / len(score_info["planner_format_score"]) if len(score_info["planner_format_score"]) > 0 else 0
             executor_format_score = sum(score_info["executor_format_score"]) / len(score_info["executor_format_score"]) if len(score_info["executor_format_score"]) > 0 else 0
             answer_score = score_info["answer_score"]
-            refine_score = score_info["refine_score"]
-            score_record[uid]["group_accuracy"] = answer_score # หรือค่าเฉลี่ยของกลุ่ม
+            score_record[uid]["group_accuracy"] = answer_score
     
-            # Final Reward: answer dominates, format/refine are small shaping signals
-            score_record[uid]["reward"] = (6 * answer_score - 3) + self.format_score * (planner_format_score + executor_format_score) + self.refine_score * refine_score
+            # Final Reward: answer dominates, format is a small shaping signal
+            score_record[uid]["reward"] = (6 * answer_score - 3) + self.format_score * (planner_format_score + executor_format_score)
             # print(f"reward record result: {score_record}")
 
         for i in range(len(data)):

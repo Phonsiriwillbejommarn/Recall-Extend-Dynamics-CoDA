@@ -2,7 +2,7 @@ import re
 import requests
 import time
 
-def compute_qwen_score(responses_str, ground_truth, credentials=None):
+def compute_qwen_score(responses_str, ground_truth, credentials=None, prompts_str=None):
     """
     Computes a reward score using Qwen-7B-Instruct as a judge via vLLM.
     
@@ -10,6 +10,7 @@ def compute_qwen_score(responses_str, ground_truth, credentials=None):
         responses_str: The model's response text.
         ground_truth: The correct answer (string or dict).
         credentials: Optional dict containing 'server_url' (default: http://localhost:8000/v1)
+        prompts_str: Optional prompt/question text.
     
     Returns:
         float: A score between 0.0 and 1.0 (or scaled).
@@ -23,13 +24,14 @@ def compute_qwen_score(responses_str, ground_truth, credentials=None):
     if isinstance(ground_truth, dict):
         truth_text = ground_truth.get('target', str(ground_truth))
 
-    # Construct the Judge Prompt (Strict & Thorough)
+    problem_text = prompts_str if prompts_str else "(Implicit in the solution)"
+
+    # Construct the Judge Prompt (Detailed Rubric)
     judge_prompt = f"""You are a strict Logic and Math Auditor.
-Your task is to evaluate the student's solution with extreme thoroughness.
-Check every single step for logical consistency, accuracy, and hallucination.
+Your job is to evaluate the provided [Student Solution] against the [Problem] and [Ground Truth Answer].
 
 [Problem]
-(Implicit in the solution)
+{problem_text}
 
 [Ground Truth Answer]
 {truth_text}
@@ -37,14 +39,31 @@ Check every single step for logical consistency, accuracy, and hallucination.
 [Student Solution]
 {responses_str}
 
-[Auditing Rules]
-1. **Accuracy is Paramount:** If the final answer is wrong -> Score < 3. No exceptions.
-2. **Logic Must Be Sound:** If the answer is correct but the reasoning is flawed or hallucinates steps -> Score < 6. (We do not reward lucky guesses).
-3. **Thoroughness:** Did the student verify their result? Did they skip important steps? Deduct points for laziness.
-4. **Perfection (10/10):** Reserved for solutions that are undeniable, clear, and mathematically rigorous.
+---
+### **Evaluation Rubric (Total: 10 Points)**
 
-Provide a critique of the logic. BE STRICT.
-Final score format: [[Score: X]]
+**1. Final Answer Accuracy (0-5 Points):**
+- **5 pts:** The final answer is EXACTLY correct and matches the Ground Truth.
+- **0 pts:** The final answer is wrong. (No partial credit for the answer itself).
+
+**2. Reasoning Process (0-4 Points):**
+- **+4 pts:** Logic is flawless, step-by-step, and explicitly derives the answer.
+- **+2 pts:** Logic is mostly correct but skips steps or is vague.
+- **+1 pts:** Contains minor logical errors but arrives at the right answer (Lucky guess).
+- **-2 pts:** **PENALTY:** Hallucinated facts or mathematical operations that are impossible.
+- **+1 pts:** **BONUS:** The student performed a "Verification" or "Double Check" step.
+
+**3. Format & Clarity (0-1 Points):**
+- **+1 pts:** Used <think> and <answer> tags correctly and reasoning was readable.
+- **0 pts:** Messy format or missing tags.
+
+---
+### **Auditor's Decision**
+Provide a brief critique of the logic, then calculate the final score.
+- If the Final Answer is WRONG, the Max Score is 3/10 (for good reasoning only).
+- If the Final Answer is CORRECT but Logic is WRONG, the Max Score is 5/10 (Lucky guess penalty).
+
+Final Format: [[Score: X]] (where X is 0-10)
 """
 
     payload = {

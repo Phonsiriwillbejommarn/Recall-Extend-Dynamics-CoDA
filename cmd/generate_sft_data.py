@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
-"""Generate SFT training data for CoDA.
+"""Generate SFT training data for CoDA (Pure Advanced Reasoning).
 Creates expert-style trajectories with type-aware patterns:
-- Math questions (GSM8K) → Direct CoT reasoning, no search
-- QA questions (HotpotQA) → Search-based patterns with CoT
+- Math questions (GSM8K) → Direct CoT reasoning
+- QA questions (HotpotQA) → Multi-step CoT reasoning with verification
 """
 import pandas as pd
 import json
 import random
 
-SYSTEM_PROMPT = """You are a helpful assistant excel at answering questions with multi-turn search engine calling.
-To answer questions, you must first reason through the available information using <think> and </think>.
-If you identify missing knowledge, you may issue a search request using <search> query </search> at any time.
-The retrieval system will provide you with the most relevant documents enclosed in <documents> and </documents>.
-After each search, you need to summarize and refine the existing documents in <refine> and </refine>.
-You may send multiple search requests if needed.
-Once you have sufficient information, provide a concise final answer using <answer> and </answer>. For example, <answer> Donald Trump </answer>."""
-
-NOISE_DOCS = [
-    "Title: Popular Culture\nContent: This article discusses various topics in popular culture and entertainment that are not directly related to the query.",
-    "Title: Historical Overview\nContent: A broad overview of historical events spanning multiple centuries. Further research may be needed for specific details.",
-    "Title: General Knowledge\nContent: This document contains general knowledge information that may or may not be relevant to the specific question asked.",
-]
+SYSTEM_PROMPT = """You are a helpful assistant that excels at answering questions with step-by-step reasoning.
+To answer questions, you must reason carefully through the problem using <think> and </think>.
+Break down complex problems into smaller steps and verify each step.
+You may use multiple rounds of thinking if needed.
+Once you have sufficient confidence, provide a concise final answer using <answer> and </answer>. For example, <answer> Donald Trump </answer>."""
 
 
 # =============================================================================
-# MATH PATTERNS (for GSM8K — no search needed)
+# MATH PATTERNS (for GSM8K — direct CoT reasoning)
 # =============================================================================
 
 def make_math_direct_cot(question, target, search_query):
@@ -33,7 +25,7 @@ def make_math_direct_cot(question, target, search_query):
         f'Let me solve this step by step.\n\nQuestion: "{question}"\n\nI need to work through the math carefully:\n- First, identify the key numbers and operations\n- Then calculate step by step\n- The answer should be {target}',
         f'This is a math problem. Let me reason through it:\n\nGiven: "{question}"\n\nStep 1: Identify what we need to find\nStep 2: Set up the calculation\nStep 3: Compute the result\n\nAfter working through the math, the answer is {target}.',
         f'Let me break down this math problem: "{question}"\n\nTo solve this:\n1. Parse the numbers and relationships\n2. Apply the correct operations\n3. Calculate carefully\n\nThe final answer is {target}.',
-        f'I can solve this mathematically without searching.\n\nProblem: "{question}"\n\nWorking through the calculations:\n- Analyzing the given information\n- Performing the arithmetic\n- Verifying the result\n\nThe answer is {target}.',
+        f'I can solve this mathematically.\n\nProblem: "{question}"\n\nWorking through the calculations:\n- Analyzing the given information\n- Performing the arithmetic\n- Verifying the result\n\nThe answer is {target}.',
     ])
     
     response = f"""<think>
@@ -66,130 +58,66 @@ def make_math_with_verification(question, target, search_query):
 
 
 # =============================================================================
-# QA PATTERNS (for HotpotQA — search-based)
+# QA PATTERNS (for HotpotQA — pure reasoning, no search)
 # =============================================================================
 
-def make_qa_single_search(question, target, search_query):
-    """QA: Single search → refine → answer (50% of QA)"""
-    cot_plan = random.choice([
-        f'Let me break down this question: "{question}"\nI need to identify the key entity and find specific information about it. The most effective approach would be to search directly for the core topic.',
-        f'To answer "{question}", I need to:\n1. Identify what specific information is being asked\n2. Search for relevant documents\n3. Extract the answer from reliable sources',
-        f'This question asks about "{question}". I should search for the main subject to find the relevant facts. Let me construct an effective search query.',
-        f'Analyzing the question: "{question}"\nThis requires factual knowledge that I should verify. Let me search for the key terms to find accurate information.',
-    ])
-    
-    cot_conclude = random.choice([
-        f'The search results clearly indicate that {target} is the correct answer. The retrieved document directly addresses the question with supporting evidence.',
-        f'After reviewing the documents, I can confirm the answer is {target}. The evidence from the search results is consistent and reliable.',
-        f'Based on my analysis of the retrieved information, {target} answers the question. The source is credible and the information is specific.',
-        f'The documents confirm that {target} is the answer. Let me provide this as my final response.',
+def make_qa_direct_reasoning(question, target, search_query):
+    """QA: Direct CoT reasoning → answer (50% of QA)"""
+    cot = random.choice([
+        f'Let me break down this question: "{question}"\nI need to identify the key entity and recall specific information about it. Let me think through what I know step by step.\n\nBased on my knowledge, the answer is {target}. Let me verify this makes sense in context.',
+        f'To answer "{question}", I need to:\n1. Identify what specific information is being asked\n2. Recall relevant facts and knowledge\n3. Reason through to the answer\n\nAfter careful reasoning, I believe the answer is {target}.',
+        f'This question asks about "{question}". Let me reason through this carefully by considering what I know about the key subject.\n\nStep 1: Identify the core question\nStep 2: Apply relevant knowledge\nStep 3: Verify the answer\n\nThe answer is {target}.',
+        f'Analyzing the question: "{question}"\nThis requires factual knowledge. Let me think through what I know step by step.\n\nAfter careful consideration of the relevant facts, the answer is {target}.',
     ])
     
     response = f"""<think>
-{cot_plan}
-</think>
-<search>{search_query}</search>
-<documents>
-Title: {search_query}
-Content: {target} is the answer to the question "{question}". This document confirms that {target} matches the query.
-</documents>
-<refine>
-Based on the retrieved documents, I found that the answer is {target}.
-</refine>
-<think>
-{cot_conclude}
+{cot}
 </think>
 <answer>{target}</answer>"""
     return response
 
 
-def make_qa_multi_hop(question, target, search_query):
-    """QA: Two searches → multi-hop reasoning (30% of QA)"""
-    words = search_query.split()
-    mid = max(len(words) // 2, 2)
-    query1 = ' '.join(words[:mid])
-    query2 = search_query
-    
-    noise = random.choice(NOISE_DOCS)
-    
-    cot_plan = random.choice([
-        f'This question seems to require multiple pieces of information: "{question}"\nLet me start by searching for the broader topic, then narrow down to specific details.',
-        f'To answer "{question}", I may need to gather information from multiple sources.\nStep 1: Search for background information\nStep 2: Search for specific details\nLet me start with a broad search.',
-        f'Analyzing this question, it likely requires connecting multiple facts.\nI\'ll approach this systematically - first search for general context, then drill down into specifics.',
+def make_qa_multi_step_reasoning(question, target, search_query):
+    """QA: Multi-step reasoning with intermediate steps (30% of QA)"""
+    cot_step1 = random.choice([
+        f'This question seems to require multiple pieces of information: "{question}"\nLet me start by breaking it down into sub-questions that I need to answer.',
+        f'To answer "{question}", I may need to connect multiple facts.\nStep 1: Identify the key entities and relationships involved.\nLet me start with the most fundamental aspect.',
+        f'Analyzing this question, it likely requires connecting multiple facts.\nI\'ll approach this systematically - first identify the key components, then reason through each one.',
     ])
     
-    cot_middle = random.choice([
-        f'The first search gave me some background context, but the documents didn\'t contain the specific answer I need.\nI should refine my search query to be more targeted and include the full question.',
-        f'Hmm, the initial results are too general. I have some context but need more specific information.\nLet me try a more detailed search query that captures the full intent of the question.',
-        f'The background information is helpful but not sufficient to answer the question directly.\nI need to search again with a more specific query to find the exact answer.',
-    ])
-    
-    cot_conclude = random.choice([
-        f'Now I have the complete picture. After combining information from both searches:\n- First search provided background context\n- Second search confirmed that {target} is the answer\nI\'m confident in this answer.',
-        f'After two rounds of searching, I\'ve gathered enough evidence.\nThe key finding from my research is that the answer is {target}. Multiple sources support this conclusion.',
-        f'Excellent! The second search provided the definitive answer. By connecting the background from my first search with the specific details from the second, I can confirm that {target} is correct.',
+    cot_step2 = random.choice([
+        f'Now let me connect the pieces together.\nBased on my reasoning about each sub-question, I can now synthesize the information to arrive at the answer.\n\nConnecting the dots:\n- First piece of information leads to a key insight\n- Second piece confirms the direction\n- Together, they point to {target} as the answer.',
+        f'After reasoning through the individual components, I can now put it all together.\n\nThe key insight is that the answer is {target}. This makes sense because the reasoning chain is consistent and each step logically follows from the previous one.',
+        f'Excellent! By reasoning through each component separately, I can now combine my findings.\nThe answer {target} is supported by the logical chain of reasoning I\'ve constructed.',
     ])
     
     response = f"""<think>
-{cot_plan}
+{cot_step1}
 </think>
-<search>{query1}</search>
-<documents>
-{noise}
-Title: Background on {query1}
-Content: This article provides background information related to {query1}. For more specific details, additional research may be needed.
-</documents>
-<refine>
-The initial search provided some background, but I need more specific information to answer the question.
-</refine>
 <think>
-{cot_middle}
-</think>
-<search>{query2}</search>
-<documents>
-Title: {search_query}
-Content: According to reliable sources, {target} is the answer. The document states that regarding "{question}", the correct answer is {target}.
-</documents>
-<refine>
-After two searches, I now have the complete information. The answer to the question is {target}.
-</refine>
-<think>
-{cot_conclude}
+{cot_step2}
 </think>
 <answer>{target}</answer>"""
     return response
 
 
-def make_qa_noisy_docs(question, target, search_query):
-    """QA: Search with noisy docs, must filter (20% of QA)"""
-    noise1 = random.choice(NOISE_DOCS)
-    noise2 = random.choice(NOISE_DOCS)
-    
-    cot_plan = random.choice([
-        f'I need to find information about: "{question}"\nI should search and then carefully evaluate the relevance of each returned document.',
-        f'Let me search for the answer to "{question}". I\'ll need to be careful to distinguish relevant information from noise in the results.',
+def make_qa_with_verification(question, target, search_query):
+    """QA: Reason + self-verify answer (20% of QA)"""
+    cot_reason = random.choice([
+        f'I need to find information about: "{question}"\nLet me reason through this carefully, considering what I know and whether my reasoning is sound.',
+        f'Let me think about "{question}". I\'ll need to be careful to distinguish solid reasoning from assumptions.',
     ])
     
-    cot_conclude = random.choice([
-        f'The search returned several documents, but not all are relevant.\nLet me filter:\n- Document 1: Not directly relevant (general topic)\n- Document 2: Not directly relevant (general topic)\n- Document 3: Directly answers the question → {target}\nI\'ll use the most relevant document for my answer.',
-        f'I need to evaluate the quality of these search results:\n- Some documents are too general and don\'t address the specific question\n- The last document specifically confirms that {target} is the answer\nI should rely on the most specific and relevant source.',
+    cot_verify = random.choice([
+        f'Let me verify my reasoning:\n- Does my answer make sense in context? Yes\n- Am I confident in my reasoning chain? Let me double-check\n- After verification, I\'m confident that {target} is the correct answer.\n\nMy reasoning is sound and the answer {target} is well-supported.',
+        f'I need to evaluate the quality of my reasoning:\n- My initial reasoning leads to {target}\n- Let me check for any logical gaps or unsupported assumptions\n- After careful verification, {target} is indeed correct.',
     ])
     
     response = f"""<think>
-{cot_plan}
+{cot_reason}
 </think>
-<search>{search_query}</search>
-<documents>
-{noise1}
-{noise2}
-Title: {search_query}
-Content: {target} is confirmed as the answer to "{question}". Multiple sources verify this information.
-</documents>
-<refine>
-The search returned several documents. After filtering out irrelevant results, the key finding is that the answer is {target}.
-</refine>
 <think>
-{cot_conclude}
+{cot_verify}
 </think>
 <answer>{target}</answer>"""
     return response
@@ -205,9 +133,9 @@ MATH_PATTERNS = [
 ]
 
 QA_PATTERNS = [
-    (make_qa_single_search, 0.50),  # 50% single search
-    (make_qa_multi_hop,     0.30),  # 30% multi-hop
-    (make_qa_noisy_docs,    0.20),  # 20% noisy docs
+    (make_qa_direct_reasoning,     0.50),  # 50% direct reasoning
+    (make_qa_multi_step_reasoning, 0.30),  # 30% multi-step
+    (make_qa_with_verification,    0.20),  # 20% reason + verify
 ]
 
 
@@ -250,20 +178,77 @@ def select_pattern(patterns):
     return patterns[0][0]
 
 
+def load_typhoon_data(path='dataset/typhoon_data.jsonl'):
+    """Load and format Typhoon advanced reasoning data."""
+    try:
+        data = []
+        with open(path, 'r') as f:
+            for line in f:
+                item = json.loads(line)
+                prompt = item.get('prompt', '')
+                response = item.get('response', '')
+                
+                # Extract parts for <think> and <answer>
+                # Pattern: [Actor - Initial Reasoning/Planning] ... [Initial Code/Answer] ...
+                think_content = ""
+                answer_content = ""
+                
+                # Simple parsing logic based on observation
+                if "[Actor - Initial Reasoning/Planning]" in response:
+                    parts = response.split("[Initial Code/Answer:")
+                    if len(parts) > 1:
+                        think_part = parts[0].replace("[Actor - Initial Reasoning/Planning]", "").strip()
+                        answer_part = parts[1].strip()
+                        # Remove trailing Critic/Refined sections if present (keep first answer for simplicity or refine logic)
+                        if "[Critic - Evaluation]" in answer_part:
+                            answer_part = answer_part.split("[Critic - Evaluation]")[0].strip()
+                        
+                        think_content = think_part
+                        answer_content = answer_part
+                
+                if not think_content or not answer_content:
+                    # Fallback: treat whole response as answer if parsing fails
+                    answer_content = response
+                
+                formatted_response = f"<think>\n{think_content}\n</think>\n<answer>\n{answer_content}\n</answer>"
+                
+                full_prompt = f"{SYSTEM_PROMPT}\n{prompt}\nAssistant: "
+                data.append({
+                    'prompt': full_prompt,
+                    'response': formatted_response
+                })
+        print(f"✅ Loaded {len(data)} examples from {path}")
+        return data
+    except Exception as e:
+        print(f"⚠️ Warning: Check if {path} exists. Error: {e}")
+        return []
+
 def create_sft_examples_from_train(train_path='data/train.parquet', output_path='data/sft_train.parquet', n_samples=1500):
-    """Create SFT examples with type-aware patterns."""
+    """Create SFT examples with mixed data: 50% Synthetic (Math/QA) + 50% Typhoon (Advanced)."""
     
+    # 1. Load Typhoon Data (Advanced Reasoning)
+    typhoon_data = load_typhoon_data()
+    n_typhoon = len(typhoon_data)
+    
+    # 2. Load Synthetic Source Data
     df = pd.read_parquet(train_path)
     print(f"Loaded {len(df)} rows from {train_path}")
     
-    if len(df) > n_samples:
-        df = df.sample(n=n_samples, random_state=42)
+    # Balance: Aim for 50/50 split if possible
+    # If we have N typhoon samples, try to get N synthetic samples
+    n_synthetic = n_typhoon if n_typhoon > 0 else n_samples
     
-    sft_data = []
+    # Cap total samples if needed, or sample with replace if not enough source data
+    if len(df) > 0:
+        replace = len(df) < n_synthetic
+        df = df.sample(n=n_synthetic, replace=replace, random_state=42)
+    
+    synthetic_data = []
     type_counts = {'math': 0, 'qa': 0}
     pattern_counts = {}
     
     for idx, row in df.iterrows():
+        # ... (Existing extraction logic) ...
         # Extract question
         prompt_data = row.get('prompt', '')
         if isinstance(prompt_data, list):
@@ -286,14 +271,28 @@ def create_sft_examples_from_train(train_path='data/train.parquet', output_path=
         
         target = ''
         if isinstance(reward_model, dict):
-            gt = reward_model.get('ground_truth', {})
-            if isinstance(gt, dict):
-                t = gt.get('target', gt.get('answer', ''))
+            # Check for direct 'target' key
+            if 'target' in reward_model:
+                t = reward_model['target']
                 if isinstance(t, list):
                     target = t[0] if t else ''
                 else:
                     target = str(t)
+            # Check for 'ground_truth' key
+            elif 'ground_truth' in reward_model:
+                gt = reward_model['ground_truth']
+                if isinstance(gt, dict):
+                    t = gt.get('target', gt.get('answer', ''))
+                    if isinstance(t, list):
+                        target = t[0] if t else ''
+                    else:
+                        target = str(t)
+                elif isinstance(gt, str):
+                    target = gt
+                elif isinstance(gt, list):
+                    target = gt[0] if gt else ''
         
+        # If still no target, try golden_answers
         if not target:
             golden = row.get('golden_answers', [])
             if isinstance(golden, list) and golden:
@@ -320,25 +319,26 @@ def create_sft_examples_from_train(train_path='data/train.parquet', output_path=
         full_prompt = f"{SYSTEM_PROMPT}\nQuestion: {question}\nAssistant: "
         response = selected_fn(question, target, search_query)
         
-        sft_data.append({
+        synthetic_data.append({
             'prompt': full_prompt,
             'response': response,
         })
     
-    sft_df = pd.DataFrame(sft_data)
+    # Combine datasets
+    all_data = typhoon_data + synthetic_data
+    random.shuffle(all_data)
+    
+    sft_df = pd.DataFrame(all_data)
     sft_df.to_parquet(output_path, index=False)
     
     print(f"\n✅ Created {len(sft_df)} SFT examples → {output_path}")
-    print(f"\nType distribution:")
-    for t, count in type_counts.items():
-        pct = count / len(sft_df) * 100 if len(sft_df) > 0 else 0
-        print(f"  {t}: {count} ({pct:.0f}%)")
-    print(f"\nPattern distribution:")
-    for name, count in sorted(pattern_counts.items()):
-        pct = count / len(sft_df) * 100 if len(sft_df) > 0 else 0
-        print(f"  {name}: {count} ({pct:.0f}%)")
+    print(f"   - Typhoon Data: {len(typhoon_data)}")
+    print(f"   - Synthetic Data: {len(synthetic_data)}")
     
-    return sft_df
+    print(f"\nSynthetic Type distribution:")
+    for t, count in type_counts.items():
+        pct = count / len(synthetic_data) * 100 if len(synthetic_data) > 0 else 0
+        print(f"  {t}: {count} ({pct:.0f}%)")
 
 if __name__ == '__main__':
     random.seed(42)

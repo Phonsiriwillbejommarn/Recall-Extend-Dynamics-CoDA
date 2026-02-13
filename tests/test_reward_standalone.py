@@ -1,0 +1,212 @@
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import re
+import string
+import random
+
+def _get_target(ground_truth):
+    """Extract target from ground_truth, handling both str and dict formats."""
+    if isinstance(ground_truth, dict):
+        return ground_truth.get('target', ground_truth.get('answer', ''))
+    return ground_truth
+from collections import Counter
+
+def normalize_answer(s):
+    def remove_articles(text):
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+
+    def white_space_fix(text):
+        return " ".join(text.split())
+
+    def remove_punc(text):
+        exclude = set(string.punctuation)
+        return "".join(ch for ch in text if ch not in exclude)
+
+    def lower(text):
+        return text.lower()
+
+    return white_space_fix(remove_articles(remove_punc(lower(s))))
+
+
+def compute_f1_scores(prediction: str, ground_truths: list):
+    final_metric = {"f1": 0, "precision": 0, "recall": 0}
+    if isinstance(ground_truths, str):
+        ground_truths = [ground_truths]
+    for ground_truth in ground_truths:
+        normalized_prediction = normalize_answer(prediction)
+        normalized_ground_truth = normalize_answer(ground_truth)
+
+        if normalized_prediction in ["yes", "no", "noanswer"] and normalized_prediction != normalized_ground_truth:
+            continue
+        if (
+            normalized_ground_truth in ["yes", "no", "noanswer"]
+            and normalized_prediction != normalized_ground_truth
+        ):
+            continue
+        prediction_tokens = normalized_prediction.split()
+        ground_truth_tokens = normalized_ground_truth.split()
+        common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
+        num_same = sum(common.values())
+        if num_same == 0:
+            continue
+        precision = 1.0 * num_same / len(prediction_tokens)
+        recall = 1.0 * num_same / len(ground_truth_tokens)
+        f1 = (2 * precision * recall) / (precision + recall)
+        for k in ["f1", "precision", "recall"]:
+            final_metric[k] = max(eval(k), final_metric[k])
+    return final_metric['f1']
+
+def validate_format(prompt, response):
+    """
+    Validate the template format with graduated scoring.
+    Returns a score between 0.0 and 1.0 based on how many tags are correctly used.
+    Each correctly paired tag contributes 1/N of the total score.
+    """
+    token_list = ['think', 'answer']
+
+    if not response:
+        return 0.0
+
+    score = 0.0
+    for special_tags in token_list:
+        start_token = f"<{special_tags}>"
+        end_token = f"</{special_tags}>"
+        start_count = response.count(start_token)
+        end_count = response.count(end_token)
+        # Give partial credit only if tag is present AND properly paired
+        if start_count > 0 and start_count == end_count:
+            score += 1.0 / len(token_list)
+    return score
+
+def em_check(prediction, golden_answers):
+    if isinstance(golden_answers, str):
+        golden_answers = [golden_answers]
+    normalized_prediction = normalize_answer(prediction)
+    score = 0
+    for golden_answer in golden_answers:
+        golden_answer = normalize_answer(golden_answer)
+        if golden_answer == normalized_prediction:
+            score = 1
+            break
+    return score
+
+
+def cover_em_check(prediction, golden_answers):
+    if isinstance(golden_answers, str):
+        golden_answers = [golden_answers]
+    normalized_prediction = normalize_answer(prediction)
+    score = 0
+    for golden_answer in golden_answers:
+        golden_answer = normalize_answer(golden_answer)
+        if golden_answer in normalized_prediction:
+            score = 1
+            break
+    return score
+
+def extract_solution(responses_str):
+    answer_pattern = r'<answer>(.*?)</answer>'
+    match = re.finditer(answer_pattern, responses_str, re.DOTALL)
+    matches = list(match)
+    
+    if len(matches) <= 0:
+        return None
+    
+    # Return the last answer found
+    return matches[-1].group(1).strip()
+
+def compute_score_format(responses_str, ground_truth):
+    format_validity = validate_format(responses_str, responses_str)
+    return format_validity
+
+def compute_reward(responses_str, ground_truth, score_func=em_check):
+    answer = extract_solution(responses_str)
+
+    if answer is None:
+        return 0
+
+    answer_score = score_func(answer, _get_target(ground_truth))
+    return answer_score
+
+def compute_score_em(responses_str, ground_truth):
+    answer = extract_solution(responses_str)
+    if answer is None:
+        return 0
+    else:
+        return em_check(answer, _get_target(ground_truth))
+
+def compute_score_f1(responses_str, ground_truth):
+    answer = extract_solution(responses_str)
+    if answer is None:
+        return 0
+    else:
+        return compute_f1_scores(answer, _get_target(ground_truth))
+
+
+def compute_score_cem(responses_str, ground_truth):
+    answer = extract_solution(responses_str)
+    if answer is None:
+        return 0
+    else:
+        return cover_em_check(answer, _get_target(ground_truth))
+
+# === TESTS ===
+def run_tests():
+    print("Testing Reward Logic...")
+    
+    # 1. Format Validation (validate_format)
+    # Full Partial Credit Logic: 1/N per tag pair. N=2 (think, answer) -> 0.5 each.
+    
+    case1 = "<think>...</think><answer>123</answer>"
+    score1 = validate_format("", case1)
+    assert score1 == 1.0, f"Case 1 Failed: {score1}"
+    print(f"✅ Full Format: {score1}")
+
+    case2 = "<think>...</think>" # Missing answer
+    score2 = validate_format("", case2)
+    assert score2 == 0.5, f"Case 2 Failed: {score2}"
+    print(f"✅ Think Only: {score2}")
+
+    case3 = "<answer>123</answer>" # Missing think
+    score3 = validate_format("", case3)
+    assert score3 == 0.5, f"Case 3 Failed: {score3}"
+    print(f"✅ Answer Only: {score3}")
+
+    case4 = "Just text" # No tags
+    score4 = validate_format("", case4)
+    assert score4 == 0.0, f"Case 4 Failed: {score4}"
+    print(f"✅ No Tags: {score4}")
+    
+    case5 = "<think>...<answer>..." # Unclosed
+    score5 = validate_format("", case5)
+    assert score5 == 0.0, f"Case 5 Failed: {score5}"
+    print(f"✅ Unclosed Tags: {score5}")
+
+    # 2. Answer Extraction (extract_solution)
+    ex1 = extract_solution("<answer>42</answer>")
+    assert ex1 == "42"
+    print(f"✅ Extraction Normal: {ex1}")
+    
+    ex2 = extract_solution("text <answer> 42 </answer> text")
+    assert ex2 == "42"
+    print(f"✅ Extraction Buried: {ex2}")
+    
+    ex3 = extract_solution("no tags")
+    assert ex3 is None
+    print(f"✅ Extraction None: {ex3}")
+
+    print("🎉 All Reward/Format Tests Passed!")
+
+if __name__ == "__main__":
+    run_tests()

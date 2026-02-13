@@ -58,6 +58,4 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=$num_gpus \
     trainer.nnodes=1 \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    retriever.url="http://127.0.0.1:8000/retrieve" \
-    retriever.topk=3 \
     2>&1 | tee log/$EXPERIMENT_NAME.log

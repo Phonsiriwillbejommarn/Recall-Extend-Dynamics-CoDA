@@ -11,7 +11,7 @@ data:
   train_batch_size: 128      # ปรับให้เหมาะสมกับการสำรวจ (Exploration) บน 1 GPU ตามหลัก RED
   val_batch_size: 128
   shuffle_train_dataloader: True
-  model_type: base
+  model_type: chat
 
 reward_model:
   enable: false
@@ -150,10 +150,8 @@ trainer:
   default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
 
 max_turns: 6      # คุมจำนวนรอบเพื่อแก้ปัญหา Context Explosion ของ CoDA
-do_search: true
-retriever:
-  url: "http://127.0.0.1:8000/retrieve"
-  topk: 3
+max_turns: 6      # Control max turns for CoDA context
+# Search/Retriever parameters removed as we are now using Pure Reasoning (CoT)
 
 # --- SFT Configuration (Extend Phase) ---
 # ใช้สอนรูปแบบ XML Tags และ Workflow ของ CoDA ให้โมเดล Base
