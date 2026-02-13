@@ -1,0 +1,173 @@
+# CoDA 2.0: RED Edition (Gemma-2-2b Optimized for 1x H100)
+data:
+  tokenizer: null
+  train_files: ~/data/rlhf/gsm8k/train.parquet
+  val_files: ~/data/rlhf/gsm8k/test.parquet
+  prompt_key: prompt
+  max_prompt_length: 3072
+  max_response_length: 1024  # Gemma 2 ทำงานได้ดีกับคำตอบที่มีรายละเอียด
+  max_start_length: 2048
+  max_obs_length: 512
+  train_batch_size: 128      # ปรับให้เหมาะสมกับการสำรวจ (Exploration) บน 1 GPU ตามหลัก RED
+  val_batch_size: 128
+  shuffle_train_dataloader: True
+  model_type: base
+
+reward_model:
+  enable: false
+  strategy: fsdp
+  reward_style: qwen_judge  # Use our custom Qwen-7B-Instruct Judge
+  train_num_examine: 1
+  val_num_examine: 1
+  model:
+    path: google/gemma-2-2b
+    enable_gradient_checkpointing: True
+    use_remove_padding: True
+  optim:
+    lr: 1e-5
+    total_training_steps: 480
+  ppo_mini_batch_size: 32
+  ppo_micro_batch_size: 8
+
+actor_rollout_ref:
+  hybrid_engine: True
+  model:
+    path: google/gemma-2-2b   # โมเดล Gemma 2 สำหรับ SLM Reasoning
+    enable_gradient_checkpointing: True # สำคัญมากสำหรับรันบน 1 GPU เพื่อประหยัด Memory
+    use_remove_padding: True
+  actor:
+    strategy: fsdp
+    ppo_mini_batch_size: 32
+    ppo_micro_batch_size: 8
+    grad_clip: 1.0
+    state_masking: True
+    clip_ratio: 0.2
+    entropy_coeff: 0.001
+    use_kl_loss: True
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    ppo_epochs: 1
+    shuffle: False
+    refine_score: 0.1
+    format_score: 0.1
+    use_dynamic_bsz: True
+    ppo_max_token_len_per_gpu: 16384
+    fsdp_config:
+      param_offload: False
+      grad_offload: False
+      optimizer_offload: False
+    lora:
+      r: 64
+      lora_alpha: 128
+      lora_dropout: 0.1
+      target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+      bias: "none"
+    optim:
+      lr: 1e-6
+      lr_warmup_steps_ratio: 0.1
+      warmup_style: constant
+      total_training_steps: 480
+  rollout:
+    name: vllm
+    temperature: 0.9
+    top_k: -1
+    top_p: 0.95
+    prompt_length: ${data.max_prompt_length}
+    response_length: ${data.max_response_length}
+    dtype: bfloat16
+    gpu_memory_utilization: 0.5  # Reduced from 0.75 to make room for Qwen server
+    enforce_eager: True
+    free_cache_engine: True
+    tensor_model_parallel_size: 1
+    max_num_batched_tokens: 8192
+    n: 4       # GRPO Group Size = 4 (as requested)
+    n_agent: 8
+    load_format: dummy_hf
+    log_prob_micro_batch_size: 8
+    log_prob_max_token_len_per_gpu: 16384
+    log_prob_use_dynamic_bsz: True
+  ref:
+    fsdp_config:
+      param_offload: False
+    log_prob_micro_batch_size: 8
+    log_prob_max_token_len_per_gpu: 16384
+    log_prob_use_dynamic_bsz: True
+    ulysses_sequence_parallel_size: 1
+
+critic:
+  strategy: fsdp
+  optim:
+    lr: 1e-5
+    total_training_steps: 480
+  model:
+    path: ${actor_rollout_ref.model.path}
+    enable_gradient_checkpointing: True
+    fsdp_config:
+      param_offload: False
+      grad_offload: False
+      optimizer_offload: False
+      model_dtype: fp32
+      wrap_policy: null
+    tokenizer_path: ${actor_rollout_ref.model.path}
+  ppo_mini_batch_size: 32
+  ppo_micro_batch_size: 8
+  ppo_epochs: 1
+  forward_micro_batch_size: 8
+  forward_max_token_len_per_gpu: 16384
+  use_dynamic_bsz: True
+
+algorithm:
+  gamma: 1.0
+  lam: 1.0
+  adv_estimator: grpo        # ใช้การประมาณค่าแบบ GRPO ตามที่ RED แนะนำ
+  no_think_rl: False
+  # --- RED Logic Implementation ---
+  red_enabled: True                 # เปิดใช้งาน Recall-Extend Dynamics
+  entropy_weight_regulation: True   # คุมสมดุลการใช้ SFT และ RL ด้วย Entropy
+  accuracy_aware_policy_shift: True # ปรับเปลี่ยนนโยบายตามความแม่นยำของคำตอบ
+  # --------------------------------
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+  state_masking:
+    start_state_marker: "<documents>"
+    end_state_marker: "</documents>"
+
+trainer:
+  total_training_steps: 480
+  project_name: CoDA_RED_Gemma2
+  experiment_name: gemma2_2b_h100_v1
+  logger: [ 'console', 'tensorboard' ]
+  nnodes: 1
+  n_gpus_per_node: 1                # ตั้งค่าสำหรับ H100 1 ใบ
+  save_freq: 20
+  resume_step: 0
+  val_before_train: true
+  total_epochs: 10
+  test_freq: 9999
+  critic_warmup: 0
+  default_hdfs_dir: null
+  default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
+
+max_turns: 6      # คุมจำนวนรอบเพื่อแก้ปัญหา Context Explosion ของ CoDA
+do_search: true
+retriever:
+  url: "http://127.0.0.1:8000/retrieve"
+  topk: 3
+
+# --- SFT Configuration (Extend Phase) ---
+# ใช้สอนรูปแบบ XML Tags และ Workflow ของ CoDA ให้โมเดล Base
+sft:
+  enabled: false                      # ตั้งเป็น true เพื่อเปิดใช้งาน SFT ร่วมกับ RL
+  train_files: data/sft_train.parquet # ไฟล์ข้อมูล SFT (Distilled expert trajectories)
+  prompt_key: prompt
+  response_key: response
+  max_length: 4096                    # ความยาว sequence สูงสุดของ SFT data
+  micro_batch_size: 4                 # Micro batch size สำหรับ SFT forward pass
+  loss_coef: 0.1                      # ค่าน้ำหนัก SFT loss เริ่มต้น (ก่อน RED ปรับ)
+
+# --- RED Dynamics Tuning ---
+red:
+  G: 5.0                             # Upper bound ของ RED weight w = clip(δH_sft/δH_rl, 1, G)
+  sft_entropy_ema_decay: 0.99        # Exponential moving average decay สำหรับ SFT entropy
+  rl_entropy_ema_decay: 0.99         # Exponential moving average decay สำหรับ RL entropy
