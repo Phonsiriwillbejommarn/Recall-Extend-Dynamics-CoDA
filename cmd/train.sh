@@ -122,6 +122,7 @@ fi
 # Convert Data to Parquet first
 if [ ! -f "data/train.parquet" ]; then
     echo "⚠️ data/train.parquet not found. Running pre-processing..."
+    export PYTHONPATH=$PYTHONPATH:.
     bash preprocess/scripts/data_process.sh
 fi
 
@@ -179,7 +180,7 @@ python3 -m verl.trainer.main_ppo \
     red.G=5.0 \
     red.sft_entropy_ema_decay=0.99 \
     red.rl_entropy_ema_decay=0.99 \
-    actor_rollout_ref.actor.enable_max_procedural=true \
+    +actor_rollout_ref.actor.enable_max_procedural=true \
     2>&1 | tee log/$EXPERIMENT_NAME.log
 
 # Cleanup

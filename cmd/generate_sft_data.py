@@ -7,6 +7,7 @@ Creates expert-style trajectories with type-aware patterns:
 import pandas as pd
 import json
 import random
+import os
 
 SYSTEM_PROMPT = """You are a helpful assistant that excels at answering questions with step-by-step reasoning.
 To answer questions, you must reason carefully through the problem using <think> and </think>.
