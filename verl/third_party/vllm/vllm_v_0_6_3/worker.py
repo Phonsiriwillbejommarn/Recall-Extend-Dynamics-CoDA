@@ -122,7 +122,7 @@ class Worker(Worker):
             cache_config,
             load_config=load_config,
             lora_config=self.lora_config,
-            kv_cache_dtype=self.cache_config.cache_dtype,
+            kv_cache_dtype=getattr(self.cache_config, 'cache_dtype', getattr(self.cache_config, 'kv_cache_dtype', 'auto')),
             is_driver_worker=is_driver_worker,
             prompt_adapter_config=prompt_adapter_config,
             **speculative_args,

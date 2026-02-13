@@ -155,19 +155,19 @@ class LLMEngine(LLMEngine):
             parallel_config.disable_custom_all_reduce,
             model_config.quantization,
             model_config.enforce_eager,
-            cache_config.cache_dtype,
+            getattr(cache_config, 'cache_dtype', getattr(cache_config, 'kv_cache_dtype', 'auto')),
             model_config.quantization_param_path,
             device_config.device,
             decoding_config,
             observability_config,
             model_config.seed,
             model_config.served_model_name,
-            scheduler_config.use_v2_block_manager,
+            getattr(scheduler_config, 'use_v2_block_manager', False),
             scheduler_config.num_scheduler_steps,
-            scheduler_config.chunked_prefill_enabled,
-            scheduler_config.multi_step_stream_outputs,
+            getattr(scheduler_config, 'chunked_prefill_enabled', False),
+            getattr(scheduler_config, 'multi_step_stream_outputs', False),
             cache_config.enable_prefix_caching,
-            model_config.use_async_output_proc,
+            getattr(model_config, 'use_async_output_proc', False),
             use_cached_outputs,
             model_config.mm_processor_kwargs,
         )
@@ -261,11 +261,11 @@ class LLMEngine(LLMEngine):
         ]
 
         self.scheduler_contexts = [
-            SchedulerContext(multi_step_stream_outputs=self.scheduler_config.multi_step_stream_outputs)
+            SchedulerContext(multi_step_stream_outputs=getattr(self.scheduler_config, 'multi_step_stream_outputs', False))
             for _ in range(self.parallel_config.pipeline_parallel_size)
         ]
 
-        if model_config.use_async_output_proc:
+        if getattr(model_config, 'use_async_output_proc', False):
             process_model_outputs = weak_bind(self._process_model_outputs)
 
             self.async_callbacks = [
@@ -288,7 +288,7 @@ class LLMEngine(LLMEngine):
                 cache_config,
                 lora_config,
                 parallel_config.pipeline_parallel_size,
-                self.async_callbacks[v_id] if model_config.use_async_output_proc else None,
+                self.async_callbacks[v_id] if getattr(model_config, 'use_async_output_proc', False) else None,
             ) for v_id in range(parallel_config.pipeline_parallel_size)
         ]
 
