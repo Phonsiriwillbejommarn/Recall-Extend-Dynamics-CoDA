@@ -83,6 +83,7 @@ python3 -m vllm.entrypoints.openai.api_server \
     --dtype bfloat16 \
     --max-model-len 4096 \
     --trust-remote-code \
+    --guided-decoding-backend lm-format-enforcer \
     --disable-log-stats &
 
 VLLM_PID=$!
@@ -161,6 +162,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.n_agent=2 \
     actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.temperature=0.9 \
+    actor_rollout_ref.rollout.top_p=0.9 \
+    actor_rollout_ref.rollout.top_k=50 \
+    actor_rollout_ref.rollout.repetition_penalty=1.2 \
     actor_rollout_ref.actor.state_masking=true \
     trainer.logger=['wandb'] \
     trainer.n_gpus_per_node=$num_gpus \
