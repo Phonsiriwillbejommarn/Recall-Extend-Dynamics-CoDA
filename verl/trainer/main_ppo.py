@@ -43,6 +43,24 @@ class RewardManager():
         self.log_path = log_path
         self.reward_style = reward_style
 
+    def _get_ground_truth(self, data_item):
+        """Robustly retrieve ground truth from data item."""
+        if 'reward_model' in data_item.non_tensor_batch:
+            return data_item.non_tensor_batch['reward_model'].get('ground_truth', {'target': ''})
+        
+        # Fallback: try to extract from response text in non_tensor_batch if available
+        # The parquet column 'response' contains the full generated text
+        response_text = data_item.non_tensor_batch.get('response', '')
+        ground_truth_target = ''
+        
+        if isinstance(response_text, str) and '<answer>' in response_text and '</answer>' in response_text:
+            try:
+                ground_truth_target = response_text.split('<answer>')[1].split('</answer>')[0].strip()
+            except:
+                pass
+        
+        return {'target': ground_truth_target}
+
     def decode_sequences_and_responses(self, data_item):
         """
         Decode sequences and responses from a DataProtoItem.
@@ -79,7 +97,7 @@ class RewardManager():
             # Use abstract decoding function
             sequences_str, responses_str = self.decode_sequences_and_responses(data_item)
 
-            ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
+            ground_truth = self._get_ground_truth(data_item)
 
             for key, compute_fn in LOG_FUNCS.items():
                 score = compute_fn(responses_str=responses_str, ground_truth=ground_truth)
@@ -110,7 +128,7 @@ class RewardManager():
                         executor_sequences_str, _ = self.decode_sequences_and_responses(data[j])
                         executor_str_list.append(executor_sequences_str)
 
-                ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
+                ground_truth = self._get_ground_truth(data_item)
 
                 for key, compute_fn in LOG_FUNCS.items():
                     score = compute_fn(responses_str=responses_str, ground_truth=ground_truth)
@@ -169,7 +187,7 @@ class RewardManager():
 
             format_validity = qa_em.validate_format(sequences_str, responses_str)
 
-            ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
+            ground_truth = self._get_ground_truth(data_item)
 
             if traj_type == "planner":
                 do_print = random.randint(1, 1024) == 1
