@@ -138,27 +138,94 @@ class RLHFDataset(Dataset):
             if isinstance(question, str) and "You are a helpful assistant" in question:
                  prompt_with_chat_template = question + "\n" + "Answer:"
             else:
-                # Decoupled CoDA System Prompt (True CoDA)
+                # Decoupled CoDA System Prompt (True CoDA) - with One-Shot Example
                 system_prompt = """You are an AI assistant capable of complex reasoning.
 To solve problems, you MUST use the following PROTOCOL:
 
 <think>
-[Actor - Initial Reasoning]
-...step-by-step reasoning...
-
-WHEN you need to verify your logic, CALL THE CRITIC:
-<task>
-Context: ...summary of reasoning...
-Question: Is this correct?
-</task>
-
-The System will return the Critic's feedback in <result>...</result>.
-
-[Actor - Refined Reasoning]
-...correction based on feedback...
+[Actor - Reasoning]
+...step-by-step logic...
 </think>
-
 <answer>Final Answer</answer>
+
+Here is an example:
+Question: Given a continuous function f(x) = x³ - 6x² + 9x + 1, find the exact coordinates of all local extrema and inflection points using derivatives, then verify your results numerically by plotting the function over [0, 5] with matplotlib.
+<think>
+[Actor - Reasoning]  
+Step 1: To find local extrema, compute the first derivative f'(x) and solve f'(x) = 0 to locate critical points. Then use the second derivative test (f''(x)) to classify each critical point as a local maximum or minimum.  
+Step 2: To find inflection points, compute the second derivative f''(x), solve f''(x) = 0, and check where concavity changes (i.e., sign change in f''(x)).  
+Step 3: Use Python with NumPy and Matplotlib to define f(x), compute derivatives analytically, evaluate critical and inflection points, and plot f(x) over [0, 5] to visually verify findings.  
+
+Initial Code/Answer:  
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Define the function
+def f(x):
+    return x**3 - 6*x**2 + 9*x + 1
+
+# First derivative
+def f_prime(x):
+    return 3*x**2 - 12*x + 9
+
+# Second derivative
+def f_double_prime(x):
+    return 6*x - 12
+
+# Find critical points (f'(x) = 0)
+critical_points = np.roots([3, -12, 9])  # roots of 3x^2 - 12x + 9 = 0
+
+# Evaluate second derivative at critical points to classify
+local_extrema = []
+for cp in critical_points:
+    if np.isreal(cp):
+        cp_val = np.real(cp)
+        fpp_val = f_double_prime(cp_val)
+        if fpp_val > 0:
+            ext_type = "local minimum"
+        elif fpp_val < 0:
+            ext_type = "local maximum"
+        else:
+            ext_type = "inflection-like (undetermined)"
+        local_extrema.append((cp_val, f(cp_val), ext_type))
+
+# Inflection points: f''(x) = 0
+inflection_x = np.roots([6, -12])[0]  # solution to 6x - 12 = 0
+inflection_y = f(inflection_x)
+
+# Plotting
+x_vals = np.linspace(0, 5, 400)
+y_vals = f(x_vals)
+
+plt.figure(figsize=(10, 6))
+plt.plot(x_vals, y_vals, label='f(x) = x³ - 6x² + 9x + 1', color='blue')
+plt.scatter(*zip(*[(cp, f(cp)) for cp, _, _ in local_extrema]), color='red', zorder=5, label='Local Extrema')
+plt.scatter(inflection_x, inflection_y, color='green', zorder=5, label='Inflection Point')
+plt.axhline(0, color='black', linewidth=0.5)
+plt.axvline(0, color='black', linewidth=0.5)
+plt.grid(True)
+plt.legend()
+plt.title('Graph of f(x) with Local Extrema and Inflection Point')
+plt.xlabel('x')
+plt.ylabel('f(x)')
+plt.xlim(0, 5)
+plt.show()
+
+# Output results
+print("Local Extrema:")
+for cp, fy, typ in local_extrema:
+    print(f"x = {cp:.3f}, f(x) = {fy:.3f} ({typ})")
+
+print(f"Inflection Point: x = {inflection_x:.3f}, f(x) = {inflection_y:.3f}")
+```
+</think>
+<answer>
+Local Extrema:
+x = 1.000, f(x) = 5.000 (local maximum)
+x = 3.000, f(x) = 1.000 (local minimum)
+Inflection Point: x = 2.000, f(x) = 3.000
+</answer>
 
 Question: """
                 prompt_with_chat_template = system_prompt + question + "\n" + "Answer:"
