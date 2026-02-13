@@ -26,6 +26,20 @@ def update_hf_weight_loader():
 
 def load_hf_weights(actor_weights: Dict, vllm_model: nn.Module):
     assert isinstance(actor_weights, Dict)
+
+    # Handle PEFT/LoRA wrapped models: strip prefix and filter adapter weights
+    has_peft_prefix = any(k.startswith("base_model.model.") for k in actor_weights.keys())
+    if has_peft_prefix:
+        cleaned = {}
+        for k, v in actor_weights.items():
+            # Skip LoRA adapter parameters – only load base model weights
+            if "lora_A" in k or "lora_B" in k or "modules_to_save" in k:
+                continue
+            # Strip the PEFT wrapper prefix
+            new_key = k.replace("base_model.model.", "", 1)
+            cleaned[new_key] = v
+        actor_weights = cleaned
+
     with set_default_torch_dtype(next(vllm_model.parameters()).dtype):  # TODO
         if vllm_model.config.tie_word_embeddings and "lm_head.weight" in actor_weights.keys():
             del actor_weights["lm_head.weight"]
